@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="level">
+  <div class="level-left">
+    <div>
+      <h1 class="title">Admin Panel</h1>
+      <p class="subtitle">Manage players and gameplay configuration</p>
+    </div>
+  </div>
+  <div class="level-right">
+    <a class="button is-light" href="/dashboard">Back to dashboard</a>
+  </div>
+</div>
+
+<div class="columns">
+  <div class="column is-half">
+    <div class="box">
+      <h2 class="title is-5">Users</h2>
+      <table class="table is-fullwidth">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in users %}
+          <tr>
+            <td>{{ item.username }}</td>
+            <td>{{ item.email }}</td>
+            <td>
+              {% if item.is_active %}
+              <span class="tag is-success">Active</span>
+              {% else %}
+              <span class="tag is-danger">Banned</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if not item.is_admin %}
+              <form method="post" action="/dashboard/admin/users/{{ item.username }}/toggle">
+                <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}" />
+                {% if item.is_active %}
+                <button class="button is-small is-danger" type="submit">Ban</button>
+                {% else %}
+                <button class="button is-small is-success" type="submit">Unban</button>
+                {% endif %}
+              </form>
+              {% else %}
+              <span class="has-text-grey">Admin</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="column is-half">
+    <div class="box">
+      <h2 class="title is-5">Gameplay configuration</h2>
+      <form method="post" action="/dashboard/admin/config">
+        <div class="field">
+          <label class="label" for="width">Width</label>
+          <div class="control">
+            <input class="input" id="width" name="width" type="number" step="1" value="{{ config.width }}" required />
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="height">Height</label>
+          <div class="control">
+            <input class="input" id="height" name="height" type="number" step="1" value="{{ config.height }}" required />
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="tick_rate">Tick rate (Hz)</label>
+          <div class="control">
+            <input class="input" id="tick_rate" name="tick_rate" type="number" step="0.1" value="{{ config.tick_rate }}" required />
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="food_count">Food nodes</label>
+          <div class="control">
+            <input class="input" id="food_count" name="food_count" type="number" step="1" value="{{ config.food_count }}" required />
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="snapshot_interval">Snapshot interval (s)</label>
+          <div class="control">
+            <input
+              class="input"
+              id="snapshot_interval"
+              name="snapshot_interval"
+              type="number"
+              step="0.1"
+              value="{{ config.snapshot_interval }}"
+              required
+            />
+          </div>
+        </div>
+        <div class="field is-grouped is-grouped-right">
+          <div class="control">
+            <button class="button is-primary" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -8,6 +8,9 @@
     </div>
   </div>
   <div class="level-right">
+    {% if user.is_admin %}
+    <a class="button is-info mr-2" href="/dashboard/admin">Admin</a>
+    {% endif %}
     <a class="button is-light" href="/dashboard/logout">Log out</a>
   </div>
 </div>
@@ -43,6 +46,13 @@
 
 <div class="box">
   <h2 class="title is-5">Worlds</h2>
+  <p class="mb-3">
+    <strong>Gameplay configuration:</strong>
+    {{ config.width }}×{{ config.height }} arena,
+    tick rate {{ config.tick_rate }} Hz,
+    {{ config.food_count }} food nodes,
+    snapshots every {{ config.snapshot_interval }}s.
+  </p>
   {% if worlds %}
   <table class="table is-fullwidth">
     <thead>

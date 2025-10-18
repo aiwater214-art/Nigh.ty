@@ -26,6 +26,7 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     is_active: bool
+    is_admin: bool
     created_at: datetime
 
     class Config:
@@ -66,3 +67,23 @@ class StatsUpdate(BaseModel):
     food_eaten: Optional[int] = None
     worlds_explored: Optional[int] = None
     sessions_played: Optional[int] = None
+
+
+class GameplayConfig(BaseModel):
+    width: float
+    height: float
+    tick_rate: float
+    food_count: int
+    snapshot_interval: float
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class GameplayConfigUpdate(BaseModel):
+    width: Optional[float] = None
+    height: Optional[float] = None
+    tick_rate: Optional[float] = None
+    food_count: Optional[int] = None
+    snapshot_interval: Optional[float] = None
