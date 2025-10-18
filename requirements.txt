@@ -1,0 +1,6 @@
+fastapi>=0.109
+uvicorn[standard]>=0.22
+httpx>=0.26
+websockets>=11.0
+pygame>=2.5
+python-dotenv>=1.0
