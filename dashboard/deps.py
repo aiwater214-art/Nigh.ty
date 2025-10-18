@@ -17,3 +17,9 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/dashboard/login"})
     return user
+
+
+def get_current_admin_user(user=Depends(get_current_user)):
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/dashboard"})
+    return user

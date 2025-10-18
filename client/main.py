@@ -61,8 +61,9 @@ async def async_main(args: argparse.Namespace) -> None:
         if not world_id:
             raise SystemExit("No world available to join")
 
+        config = await client.get_config()
         ws_url = args.ws or http_to_ws(args.server)
-        game = GameClient(ws_url, world_id, session.token, session.username)
+        game = GameClient(ws_url, world_id, session.token, session.username, initial_config=config)
         await game.run()
 
 

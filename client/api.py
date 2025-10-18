@@ -44,6 +44,11 @@ class ServerClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_config(self) -> Dict[str, Any]:
+        response = await self._client.get("/config")
+        response.raise_for_status()
+        return response.json()
+
     async def __aenter__(self) -> "ServerClient":
         return self
 
