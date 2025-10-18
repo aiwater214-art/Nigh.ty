@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 class="title">Register</h1>
+{% if error %}
+<div class="notification is-danger">{{ error }}</div>
+{% endif %}
+<form method="post">
+  <div class="field">
+    <label class="label">Username</label>
+    <div class="control">
+      <input class="input" type="text" name="username" required />
+    </div>
+  </div>
+  <div class="field">
+    <label class="label">Email</label>
+    <div class="control">
+      <input class="input" type="email" name="email" required />
+    </div>
+  </div>
+  <div class="field">
+    <label class="label">Full name</label>
+    <div class="control">
+      <input class="input" type="text" name="full_name" />
+    </div>
+  </div>
+  <div class="field">
+    <label class="label">Password</label>
+    <div class="control">
+      <input class="input" type="password" name="password" required />
+    </div>
+  </div>
+  <div class="field is-grouped">
+    <div class="control">
+      <button class="button is-link" type="submit">Create account</button>
+    </div>
+    <div class="control">
+      <a class="button is-text" href="/dashboard/login">Have an account?</a>
+    </div>
+  </div>
+</form>
+{% endblock %}
