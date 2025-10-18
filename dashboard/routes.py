@@ -4,10 +4,20 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.events import CONFIG_CHANNEL, config_pubsub
 from app.core.security import create_access_token
-from app.crud import authenticate_user, create_user, get_user_by_email, get_user_by_username, list_worlds
-from app.models import UserStats as UserStatsModel
-from dashboard.deps import get_current_user
+from app.crud import (
+    authenticate_user,
+    create_user,
+    get_gameplay_config,
+    get_user_by_email,
+    get_user_by_username,
+    list_worlds,
+    set_user_active,
+    update_gameplay_config,
+)
+from app.models import User as UserModel, UserStats as UserStatsModel
+from dashboard.deps import get_current_admin_user, get_current_user
 
 router = APIRouter(prefix="/dashboard")
 templates = Jinja2Templates(directory="dashboard/templates")
@@ -83,6 +93,7 @@ def dashboard_home(request: Request, user=Depends(get_current_user), db: Session
         "sessions_played": sum((row[3] or 0) for row in aggregate),
     }
     worlds = list_worlds(db)
+    config = get_gameplay_config(db)
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -91,5 +102,57 @@ def dashboard_home(request: Request, user=Depends(get_current_user), db: Session
             "stats": stats,
             "totals": totals,
             "worlds": worlds,
+            "config": config,
         },
     )
+
+
+@router.get("/admin")
+def admin_home(request: Request, user=Depends(get_current_admin_user), db: Session = Depends(get_db)):
+    users = db.query(UserModel).order_by(UserModel.username).all()
+    config = get_gameplay_config(db)
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "user": user,
+            "users": users,
+            "config": config,
+        },
+    )
+
+
+@router.post("/admin/users/{username}/toggle")
+def toggle_user(
+    request: Request,
+    username: str,
+    user=Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+):
+    target = get_user_by_username(db, username)
+    if target:
+        set_user_active(db, target, not target.is_active)
+    return RedirectResponse(url="/dashboard/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/admin/config")
+def update_admin_config(
+    request: Request,
+    width: float = Form(...),
+    height: float = Form(...),
+    tick_rate: float = Form(...),
+    food_count: int = Form(...),
+    snapshot_interval: float = Form(...),
+    user=Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+):
+    config = update_gameplay_config(
+        db,
+        width=width,
+        height=height,
+        tick_rate=tick_rate,
+        food_count=food_count,
+        snapshot_interval=snapshot_interval,
+    )
+    config_pubsub.publish(CONFIG_CHANNEL, config.as_dict())
+    return RedirectResponse(url="/dashboard/admin", status_code=status.HTTP_303_SEE_OTHER)

@@ -29,13 +29,23 @@ class Entity:
 class WorldView:
     width: float
     height: float
+    tick_rate: float = 30.0
+    food_count: int = 200
+    snapshot_interval: float = 10.0
     players: Dict[str, Entity] = field(default_factory=dict)
     foods: Dict[str, Entity] = field(default_factory=dict)
 
-    def update_from_snapshot(self, snapshot: dict) -> None:
-        config = snapshot.get("config", {})
+    def apply_config(self, config: dict) -> None:
         self.width = float(config.get("width", self.width))
         self.height = float(config.get("height", self.height))
+        self.tick_rate = float(config.get("tick_rate", self.tick_rate))
+        self.food_count = int(config.get("food_count", self.food_count))
+        self.snapshot_interval = float(config.get("snapshot_interval", self.snapshot_interval))
+
+    def update_from_snapshot(self, snapshot: dict) -> None:
+        config = snapshot.get("config", {})
+        if config:
+            self.apply_config(config)
 
         self.players.clear()
         for player in snapshot.get("players", []):
@@ -65,12 +75,14 @@ class WorldView:
 class GameClient:
     """Handles websocket interaction and rendering."""
 
-    def __init__(self, base_ws_url: str, world_id: str, token: str, player_name: str) -> None:
+    def __init__(self, base_ws_url: str, world_id: str, token: str, player_name: str, *, initial_config: Optional[dict] = None) -> None:
         self._base_ws_url = base_ws_url.rstrip("/")
         self._world_id = world_id
         self._token = token
         self._player_name = player_name
         self._world = WorldView(width=1000.0, height=1000.0)
+        if initial_config:
+            self._world.apply_config(initial_config)
         self._running = True
         self._player_id: Optional[str] = None
 
@@ -93,9 +105,16 @@ class GameClient:
             if msg_type == "joined":
                 player = data.get("player", {})
                 self._player_id = player.get("id")
+                config = data.get("config")
+                if isinstance(config, dict):
+                    self._world.apply_config(config)
             elif msg_type == "world":
                 state = data.get("state", {})
                 self._world.update_from_snapshot(state)
+            elif msg_type == "config_update":
+                config = data.get("config")
+                if isinstance(config, dict):
+                    self._world.apply_config(config)
 
     async def _render_loop(self, websocket: websockets.WebSocketClientProtocol) -> None:
         pygame.init()

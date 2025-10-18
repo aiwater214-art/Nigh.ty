@@ -12,8 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+from .config import ConfigService, load_config_from_database
 from .player import Player
 from .world import WorldManager, WorldSnapshotRepository
+from app.core.database import SessionLocal
+from app.crud import get_gameplay_config
 
 
 class Settings(BaseModel):
@@ -93,25 +96,64 @@ class ConnectionHub:
         async with self._lock:
             return dict(self._connections.get(world_id, {}))
 
+    async def broadcast_global(self, message: dict) -> None:
+        async with self._lock:
+            snapshot = {
+                world_id: dict(players)
+                for world_id, players in self._connections.items()
+            }
+        for world_id, players in snapshot.items():
+            for player_id, websocket in list(players.items()):
+                try:
+                    await websocket.send_json(message)
+                except RuntimeError:
+                    await self.unregister(world_id, player_id)
 
-async def create_dependencies() -> tuple[WorldManager, TokenStore, ConnectionHub, Settings]:
+
+async def create_dependencies() -> tuple[WorldManager, TokenStore, ConnectionHub, Settings, ConfigService]:
     load_dotenv()
     settings = Settings.load()
     snapshot_repo = WorldSnapshotRepository(settings.snapshot_dir)
     world_manager = WorldManager(snapshot_repo, default_tick_rate=settings.tick_rate)
     token_store = TokenStore()
     connection_hub = ConnectionHub()
-    return world_manager, token_store, connection_hub, settings
+    
+    def fetch_sync() -> dict:
+        db = SessionLocal()
+        try:
+            config = get_gameplay_config(db)
+            return config.as_dict()
+        finally:
+            db.close()
+
+    async def fetch_config() -> dict:
+        return await load_config_from_database(fetch_sync)
+
+    async def apply_config(values: dict) -> None:
+        await world_manager.update_config(values)
+
+    async def broadcast_config(values: dict) -> None:
+        await connection_hub.broadcast_global({"type": "config_update", "config": values})
+
+    config_service = ConfigService(
+        fetch_config=fetch_config,
+        apply_config=apply_config,
+        broadcast=broadcast_config,
+    )
+    await config_service.start()
+    return world_manager, token_store, connection_hub, settings, config_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    world_manager, token_store, connection_hub, settings = await create_dependencies()
+    world_manager, token_store, connection_hub, settings, config_service = await create_dependencies()
     app.state.world_manager = world_manager
     app.state.token_store = token_store
     app.state.connection_hub = connection_hub
     app.state.settings = settings
+    app.state.config_service = config_service
     yield
+    await config_service.stop()
 
 
 def get_world_manager(app: FastAPI = Depends()) -> WorldManager:  # type: ignore[override]
@@ -157,6 +199,7 @@ def create_app() -> FastAPI:
         world_manager: WorldManager = websocket.app.state.world_manager  # type: ignore[attr-defined]
         token_store: TokenStore = websocket.app.state.token_store  # type: ignore[attr-defined]
         connection_hub: ConnectionHub = websocket.app.state.connection_hub  # type: ignore[attr-defined]
+        config_service: ConfigService = websocket.app.state.config_service  # type: ignore[attr-defined]
 
         username = await token_store.validate(token)
         if not username:
@@ -175,7 +218,14 @@ def create_app() -> FastAPI:
         subscription = await world_manager.subscribe(world_id)
         reader_task: Optional[asyncio.Task] = None
         try:
-            await websocket.send_json({"type": "joined", "player": player.to_dict(), "cell": cell.to_dict()})
+            await websocket.send_json(
+                {
+                    "type": "joined",
+                    "player": player.to_dict(),
+                    "cell": cell.to_dict(),
+                    "config": config_service.snapshot(),
+                }
+            )
 
             async def read_messages() -> None:
                 while True:

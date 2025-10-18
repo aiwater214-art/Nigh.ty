@@ -7,7 +7,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
 from uuid import uuid4
 
 from .player import Player
@@ -60,6 +60,16 @@ class WorldConfig:
     tick_rate: float = 30.0
     food_count: int = 200
     snapshot_interval: float = 10.0
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "width": self.width,
+            "height": self.height,
+            "tick_rate": self.tick_rate,
+            "food_count": self.food_count,
+            "snapshot_interval": self.snapshot_interval,
+        }
 
 
 @dataclass
@@ -162,11 +172,7 @@ class WorldState:
 
     def snapshot(self) -> dict:
         return {
-            "config": {
-                "name": self.config.name,
-                "width": self.config.width,
-                "height": self.config.height,
-            },
+            "config": self.config.to_dict(),
             "players": [player.to_dict() for player in self.players.values()],
             "cells": [cell.to_dict() for cell in self.cells.values()],
             "foods": [food.to_dict() for food in self.foods.values()],
@@ -208,7 +214,13 @@ class WorldManager:
         self._worlds: Dict[str, WorldContext] = {}
         self._snapshot_repo = snapshot_repo
         self._lock = asyncio.Lock()
-        self._default_tick_rate = default_tick_rate
+        self._config_defaults: Dict[str, float] = {
+            "width": 1000.0,
+            "height": 1000.0,
+            "tick_rate": default_tick_rate,
+            "food_count": 200,
+            "snapshot_interval": 10.0,
+        }
 
     async def list_worlds(self) -> List[dict]:
         async with self._lock:
@@ -224,7 +236,15 @@ class WorldManager:
     async def create_world(self, name: str) -> dict:
         async with self._lock:
             world_id = uuid4().hex
-            config = WorldConfig(name=name, tick_rate=self._default_tick_rate)
+            defaults = self._config_defaults
+            config = WorldConfig(
+                name=name,
+                width=float(defaults["width"]),
+                height=float(defaults["height"]),
+                tick_rate=float(defaults["tick_rate"]),
+                food_count=int(defaults["food_count"]),
+                snapshot_interval=float(defaults["snapshot_interval"]),
+            )
             state = WorldState(config=config)
             state.populate_food()
             ctx = WorldContext(state=state, listeners=[])
@@ -271,8 +291,6 @@ class WorldManager:
 
     async def _run_world(self, world_id: str, ctx: WorldContext) -> None:
         state = ctx.state
-        tick_rate = state.config.tick_rate
-        tick_interval = 1.0 / tick_rate
         while True:
             now = time.monotonic()
             dt = now - state.last_update
@@ -290,7 +308,23 @@ class WorldManager:
             if now - ctx.last_snapshot >= state.config.snapshot_interval:
                 await self._snapshot_repo.save_snapshot(world_id, snapshot)
                 ctx.last_snapshot = now
+            tick_rate = max(1e-3, state.config.tick_rate)
+            tick_interval = 1.0 / tick_rate
             await asyncio.sleep(tick_interval)
+
+    async def update_config(self, values: Dict[str, Any]) -> None:
+        async with self._lock:
+            self._config_defaults.update({k: float(v) for k, v in values.items() if k in {"width", "height", "tick_rate", "snapshot_interval"}})
+            if "food_count" in values:
+                self._config_defaults["food_count"] = float(values["food_count"])
+            for ctx in self._worlds.values():
+                state = ctx.state
+                state.config.width = float(self._config_defaults["width"])
+                state.config.height = float(self._config_defaults["height"])
+                state.config.tick_rate = float(self._config_defaults["tick_rate"])
+                state.config.snapshot_interval = float(self._config_defaults["snapshot_interval"])
+                state.config.food_count = int(self._config_defaults["food_count"])
+                state.populate_food()
 
 
 @dataclass
