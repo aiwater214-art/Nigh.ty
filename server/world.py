@@ -109,7 +109,12 @@ class WorldState:
         )
 
     def populate_food(self) -> None:
-        while len(self.foods) < self.config.food_count:
+        target_food_count = max(0, int(self.config.food_count))
+
+        while len(self.foods) > target_food_count:
+            self.foods.popitem()
+
+        while len(self.foods) < target_food_count:
             food_id = uuid4().hex
             position = (
                 float(uuid4().int % int(self.config.width)),

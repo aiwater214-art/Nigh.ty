@@ -1,7 +1,15 @@
+import asyncio
+import contextlib
 import math
 
 from server.player import Player
-from server.world import WorldConfig, WorldState
+
+from server.world import (
+    WorldConfig,
+    WorldManager,
+    WorldSnapshotRepository,
+    WorldState,
+)
 
 
 def _make_player(name: str) -> Player:
@@ -42,3 +50,30 @@ def test_absorbed_cells_do_not_recollide():
     expected_area = big_area + 0.8 * mid_area + 0.8 * small_area
 
     assert math.isclose(resulting_cell.area(), expected_area, rel_tol=1e-6)
+
+
+def test_update_config_prunes_food(tmp_path):
+    async def run_scenario() -> None:
+        repo = WorldSnapshotRepository(str(tmp_path))
+        manager = WorldManager(repo)
+
+        world_info = await manager.create_world("prune-test")
+        world_id = world_info["id"]
+        ctx = manager._worlds[world_id]
+        state = ctx.state
+
+        assert len(state.foods) == state.config.food_count
+        assert state.config.food_count > 5
+
+        if ctx.task:
+            ctx.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ctx.task
+            ctx.task = None
+
+        await manager.update_config({"food_count": 5})
+
+        assert state.config.food_count == 5
+        assert len(state.foods) == 5
+
+    asyncio.run(run_scenario())
