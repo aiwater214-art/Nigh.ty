@@ -166,6 +166,12 @@ def get_token_store(app: FastAPI = Depends()) -> TokenStore:  # type: ignore[ove
 
 def get_settings(app: FastAPI = Depends()) -> Settings:  # type: ignore[override]
     return app.state.settings  # type: ignore[attr-defined]
+
+
+def get_config_service(app: FastAPI = Depends()) -> ConfigService:  # type: ignore[override]
+    return app.state.config_service  # type: ignore[attr-defined]
+
+
 def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.add_middleware(
@@ -181,6 +187,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=401, detail="Dashboard token invalid")
         token = await token_store.issue_token(payload.username)
         return LoginResponse(token=token, username=payload.username)
+
+    @app.get("/config")
+    async def get_config(config_service: ConfigService = Depends(get_config_service)):
+        return config_service.snapshot()
 
     @app.get("/worlds")
     async def list_worlds(token: str, world_manager: WorldManager = Depends(get_world_manager), token_store: TokenStore = Depends(get_token_store)):
