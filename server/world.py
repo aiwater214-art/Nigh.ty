@@ -155,15 +155,42 @@ class WorldState:
 
     def _handle_cell_collisions(self) -> None:
         cells = list(self.cells.values())
-        for i, cell in enumerate(cells):
-            for other in cells[i + 1 :]:
+        i = 0
+        while i < len(cells):
+            cell = cells[i]
+            if cell.player_id not in self.cells:
+                i += 1
+                continue
+
+            restart = False
+            j = i + 1
+            while j < len(cells):
+                other = cells[j]
+                if other.player_id not in self.cells:
+                    j += 1
+                    continue
                 if cell.player_id == other.player_id:
+                    j += 1
                     continue
                 if _collides(cell.position, cell.radius, other.position, other.radius):
                     if cell.radius > other.radius * 1.1:
                         self._absorb(cell, other)
                     elif other.radius > cell.radius * 1.1:
                         self._absorb(other, cell)
+                    else:
+                        j += 1
+                        continue
+
+                    cells = list(self.cells.values())
+                    restart = True
+                    break
+                j += 1
+
+            if restart:
+                i = 0
+                continue
+
+            i += 1
 
     def _absorb(self, winner: Cell, loser: Cell) -> None:
         new_area = winner.area() + loser.area() * 0.8
