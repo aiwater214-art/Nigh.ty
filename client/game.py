@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import urllib.parse
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Dict, Optional
@@ -87,7 +88,16 @@ class GameClient:
         self._player_id: Optional[str] = None
 
     async def run(self) -> None:
-        ws_url = f"{self._base_ws_url}/ws/world/{self._world_id}?token={self._token}&player_name={self._player_name}"
+        query_params: list[tuple[str, str]] = []
+        if self._token is not None:
+            query_params.append(("token", self._token))
+        if self._player_name is not None:
+            query_params.append(("player_name", self._player_name))
+
+        query_string = urllib.parse.urlencode(query_params)
+        ws_url = f"{self._base_ws_url}/ws/world/{self._world_id}"
+        if query_string:
+            ws_url = f"{ws_url}?{query_string}"
         async with websockets.connect(ws_url) as websocket:
             receiver = asyncio.create_task(self._receiver(websocket))
             try:
