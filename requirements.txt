@@ -6,6 +6,7 @@ python-multipart
 python-jose[cryptography]
 passlib[bcrypt]
 pydantic
+pydantic-settings
 jinja2
 httpx
 pytest
