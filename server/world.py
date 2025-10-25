@@ -82,6 +82,7 @@ class WorldState:
     foods: Dict[str, Food] = field(default_factory=dict)
     last_update: float = field(default_factory=time.monotonic)
     targets: Dict[str, Vector] = field(default_factory=dict)
+    events: List[dict] = field(default_factory=list)
 
     def add_player(self, player: Player) -> Cell:
         spawn_position = self._find_spawn_position()
@@ -101,6 +102,10 @@ class WorldState:
             tx = max(0.0, min(self.config.width, target[0]))
             ty = max(0.0, min(self.config.height, target[1]))
             self.targets[player_id] = (tx, ty)
+
+    def pop_events(self) -> List[dict]:
+        events, self.events = self.events, []
+        return events
 
     def _find_spawn_position(self) -> Vector:
         return (
@@ -153,6 +158,7 @@ class WorldState:
                     player = self.players.get(cell.player_id)
                     if player:
                         player.score += food.value
+                        player.food_eaten += 1
                     break
         for food_id in consumed:
             self.foods.pop(food_id, None)
@@ -200,6 +206,19 @@ class WorldState:
     def _absorb(self, winner: Cell, loser: Cell) -> None:
         new_area = winner.area() + loser.area() * 0.8
         winner.radius = math.sqrt(new_area / math.pi)
+        winner_player = self.players.get(winner.player_id)
+        loser_player = self.players.get(loser.player_id)
+        if winner_player:
+            winner_player.cells_eaten += 1
+        self.events.append(
+            {
+                "type": "player_eliminated",
+                "winner_id": winner.player_id,
+                "loser_id": loser.player_id,
+                "winner_name": winner_player.name if winner_player else None,
+                "loser_name": loser_player.name if loser_player else None,
+            }
+        )
         self.remove_player(loser.player_id)
 
     def snapshot(self) -> dict:
@@ -253,6 +272,7 @@ class WorldManager:
             "food_count": 200,
             "snapshot_interval": 10.0,
         }
+        self._event_listeners: List[Callable[[str, dict], Awaitable[None]]] = []
 
     async def list_worlds(self) -> List[dict]:
         async with self._lock:
@@ -321,6 +341,9 @@ class WorldManager:
 
         return WorldSubscription(queue=queue, dispose=remove_listener)
 
+    def register_event_listener(self, listener: Callable[[str, dict], Awaitable[None]]) -> None:
+        self._event_listeners.append(listener)
+
     async def _run_world(self, world_id: str, ctx: WorldContext) -> None:
         state = ctx.state
         while True:
@@ -328,6 +351,7 @@ class WorldManager:
             dt = now - state.last_update
             state.last_update = now
             state.tick(dt)
+            events = state.pop_events()
             snapshot = state.snapshot()
             listeners = list(ctx.listeners)
             for queue in listeners:
@@ -337,6 +361,9 @@ class WorldManager:
                     except asyncio.QueueEmpty:
                         pass
                 await queue.put(snapshot)
+            for event in events:
+                for listener in list(self._event_listeners):
+                    await listener(world_id, event)
             if now - ctx.last_snapshot >= state.config.snapshot_interval:
                 await self._snapshot_repo.save_snapshot(world_id, snapshot)
                 ctx.last_snapshot = now

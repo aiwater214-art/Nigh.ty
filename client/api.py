@@ -21,10 +21,10 @@ class ServerClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def login(self, username: str, dashboard_token: str) -> AuthSession:
+    async def login(self, username: str, password: str) -> AuthSession:
         response = await self._client.post(
             "/login",
-            json={"username": username, "dashboard_token": dashboard_token},
+            json={"username": username, "password": password},
         )
         response.raise_for_status()
         data = response.json()
