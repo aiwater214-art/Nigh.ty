@@ -5,7 +5,8 @@ alembic
 python-multipart
 python-jose[cryptography]
 passlib[bcrypt]
-pydantic
+pydantic[email]
+pydantic-settings
 jinja2
 httpx
 pytest

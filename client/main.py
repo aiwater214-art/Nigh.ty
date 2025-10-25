@@ -6,6 +6,8 @@ import asyncio
 import os
 from typing import Optional
 
+from dotenv import load_dotenv
+
 from .api import ServerClient
 from .game import GameClient
 
@@ -16,6 +18,9 @@ def http_to_ws(url: str) -> str:
     if url.startswith("http://"):
         return "ws://" + url[len("http://") :]
     return url
+
+
+load_dotenv()
 
 
 def build_parser() -> argparse.ArgumentParser:
