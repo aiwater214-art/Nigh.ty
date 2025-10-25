@@ -1,13 +1,12 @@
 """FastAPI application exposing HTTP and WebSocket APIs."""
-from __future__ import annotations
 
 import asyncio
 import os
 import secrets
 from contextlib import asynccontextmanager, suppress
-from typing import Dict, Optional
+from typing import Annotated, Dict, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -156,20 +155,20 @@ async def lifespan(app: FastAPI):
     await config_service.stop()
 
 
-def get_world_manager(app: FastAPI = Depends()) -> WorldManager:  # type: ignore[override]
-    return app.state.world_manager  # type: ignore[attr-defined]
+def get_world_manager(request: Request) -> WorldManager:  # type: ignore[override]
+    return request.app.state.world_manager  # type: ignore[attr-defined]
 
 
-def get_token_store(app: FastAPI = Depends()) -> TokenStore:  # type: ignore[override]
-    return app.state.token_store  # type: ignore[attr-defined]
+def get_token_store(request: Request) -> TokenStore:  # type: ignore[override]
+    return request.app.state.token_store  # type: ignore[attr-defined]
 
 
-def get_settings(app: FastAPI = Depends()) -> Settings:  # type: ignore[override]
-    return app.state.settings  # type: ignore[attr-defined]
+def get_settings(request: Request) -> Settings:  # type: ignore[override]
+    return request.app.state.settings  # type: ignore[attr-defined]
 
 
-def get_config_service(app: FastAPI = Depends()) -> ConfigService:  # type: ignore[override]
-    return app.state.config_service  # type: ignore[attr-defined]
+def get_config_service(request: Request) -> ConfigService:  # type: ignore[override]
+    return request.app.state.config_service  # type: ignore[attr-defined]
 
 
 def create_app() -> FastAPI:
@@ -181,25 +180,30 @@ def create_app() -> FastAPI:
         allow_headers=["*"]
     )
 
+    SettingsDep = Annotated[Settings, Depends(get_settings)]
+    TokenStoreDep = Annotated[TokenStore, Depends(get_token_store)]
+    WorldManagerDep = Annotated[WorldManager, Depends(get_world_manager)]
+    ConfigServiceDep = Annotated[ConfigService, Depends(get_config_service)]
+
     @app.post("/login", response_model=LoginResponse)
-    async def login(payload: LoginRequest, settings: Settings = Depends(get_settings), token_store: TokenStore = Depends(get_token_store)):
+    async def login(payload: LoginRequest, settings: SettingsDep, token_store: TokenStoreDep):
         if payload.dashboard_token != settings.dashboard_api_key:
             raise HTTPException(status_code=401, detail="Dashboard token invalid")
         token = await token_store.issue_token(payload.username)
         return LoginResponse(token=token, username=payload.username)
 
     @app.get("/config")
-    async def get_config(config_service: ConfigService = Depends(get_config_service)):
+    async def get_config(config_service: ConfigServiceDep):
         return config_service.snapshot()
 
     @app.get("/worlds")
-    async def list_worlds(token: str, world_manager: WorldManager = Depends(get_world_manager), token_store: TokenStore = Depends(get_token_store)):
+    async def list_worlds(token: str, world_manager: WorldManagerDep, token_store: TokenStoreDep):
         if not await token_store.validate(token):
             raise HTTPException(status_code=401, detail="Invalid token")
         return await world_manager.list_worlds()
 
     @app.post("/worlds")
-    async def create_world(payload: CreateWorldRequest, token: str, world_manager: WorldManager = Depends(get_world_manager), token_store: TokenStore = Depends(get_token_store)):
+    async def create_world(payload: CreateWorldRequest, token: str, world_manager: WorldManagerDep, token_store: TokenStoreDep):
         if not await token_store.validate(token):
             raise HTTPException(status_code=401, detail="Invalid token")
         return await world_manager.create_world(payload.name)
