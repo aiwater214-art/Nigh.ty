@@ -55,7 +55,7 @@ class ClientApplication:
         self._default_username = default_username
         self._default_token = default_token
 
-    async def run(self) -> Optional[LoginResult]:
+    async def run(self, resume_session: Optional[AuthSession] = None) -> Optional[LoginResult]:
         # Import pygame lazily so automated tests that don't have SDL can still import the module.
         import pygame
 
@@ -66,9 +66,11 @@ class ClientApplication:
         clock = pygame.time.Clock()
 
         try:
-            session = await self._auth_screen(pygame, screen, clock)
+            session = resume_session
             if session is None:
-                return None
+                session = await self._auth_screen(pygame, screen, clock)
+                if session is None:
+                    return None
 
             world_id = await self._menu_screen(pygame, screen, clock, session)
             if world_id is None:
@@ -464,14 +466,29 @@ def wrap_lines(screen, font, text: str, bounds, *, color) -> None:
 async def async_main(args: argparse.Namespace) -> None:
     async with ServerClient(args.server) as client:
         app = ClientApplication(client, default_username=args.username, default_token=args.dashboard_token)
-        result = await app.run()
-        if result is None or result.requested_world is None:
-            return
+        session: Optional[AuthSession] = None
+        while True:
+            result = await app.run(resume_session=session)
+            if result is None or result.requested_world is None:
+                return
 
-        config = await client.get_config()
-        ws_url = args.ws or http_to_ws(args.server)
-        game = GameClient(ws_url, result.requested_world, result.session.token, result.session.username, initial_config=config)
-        await game.run()
+            session = result.session
+            config = await client.get_config()
+            ws_url = args.ws or http_to_ws(args.server)
+            game = GameClient(
+                ws_url,
+                result.requested_world,
+                session.token,
+                session.username,
+                initial_config=config,
+            )
+            await game.run()
+
+            # Returning to the menu allows the player to pick another world or exit.
+            if not game.was_eliminated():
+                # If the player closed the game window intentionally, keep the existing session
+                # and present the lobby again so they can choose what to do next.
+                continue
 
 
 def main() -> None:

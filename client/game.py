@@ -86,6 +86,7 @@ class GameClient:
             self._world.apply_config(initial_config)
         self._running = True
         self._player_id: Optional[str] = None
+        self._eliminated = False
 
     async def run(self) -> None:
         query_params: list[tuple[str, str]] = []
@@ -121,6 +122,10 @@ class GameClient:
             elif msg_type == "world":
                 state = data.get("state", {})
                 self._world.update_from_snapshot(state)
+            elif msg_type == "eliminated":
+                self._eliminated = True
+                self._running = False
+                return
             elif msg_type == "config_update":
                 config = data.get("config")
                 if isinstance(config, dict):
@@ -152,6 +157,9 @@ class GameClient:
             await asyncio.sleep(0)
 
         pygame.quit()
+
+    def was_eliminated(self) -> bool:
+        return self._eliminated
 
     def _draw_world(self, screen: pygame.Surface, window_size: tuple[int, int]) -> None:
         for food in self._world.foods.values():
