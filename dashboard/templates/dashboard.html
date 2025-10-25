@@ -19,26 +19,22 @@
   <div class="column">
     <div class="box">
       <h2 class="title is-5">Your Stats</h2>
-      {% if stats %}
       <ul>
-        <li><strong>Cells eaten:</strong> {{ stats.cells_eaten }}</li>
-        <li><strong>Food eaten:</strong> {{ stats.food_eaten }}</li>
-        <li><strong>Worlds explored:</strong> {{ stats.worlds_explored }}</li>
-        <li><strong>Sessions played:</strong> {{ stats.sessions_played }}</li>
+        <li><strong>Cells eaten:</strong> <span data-user-stat="cells_eaten">{{ (stats and stats.cells_eaten) or 0 }}</span></li>
+        <li><strong>Food eaten:</strong> <span data-user-stat="food_eaten">{{ (stats and stats.food_eaten) or 0 }}</span></li>
+        <li><strong>Worlds explored:</strong> <span data-user-stat="worlds_explored">{{ (stats and stats.worlds_explored) or 0 }}</span></li>
+        <li><strong>Sessions played:</strong> <span data-user-stat="sessions_played">{{ (stats and stats.sessions_played) or 0 }}</span></li>
       </ul>
-      {% else %}
-      <p>No stats available yet.</p>
-      {% endif %}
     </div>
   </div>
   <div class="column">
     <div class="box">
       <h2 class="title is-5">Global Metrics</h2>
       <ul>
-        <li><strong>Cells eaten:</strong> {{ totals.cells_eaten }}</li>
-        <li><strong>Food eaten:</strong> {{ totals.food_eaten }}</li>
-        <li><strong>Worlds explored:</strong> {{ totals.worlds_explored }}</li>
-        <li><strong>Sessions played:</strong> {{ totals.sessions_played }}</li>
+        <li><strong>Cells eaten:</strong> <span data-total-stat="cells_eaten">{{ totals.cells_eaten }}</span></li>
+        <li><strong>Food eaten:</strong> <span data-total-stat="food_eaten">{{ totals.food_eaten }}</span></li>
+        <li><strong>Worlds explored:</strong> <span data-total-stat="worlds_explored">{{ totals.worlds_explored }}</span></li>
+        <li><strong>Sessions played:</strong> <span data-total-stat="sessions_played">{{ totals.sessions_played }}</span></li>
       </ul>
     </div>
   </div>
@@ -78,4 +74,58 @@
   <p>No worlds registered yet.</p>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const userStatsEls = {
+      cells_eaten: document.querySelector('[data-user-stat="cells_eaten"]'),
+      food_eaten: document.querySelector('[data-user-stat="food_eaten"]'),
+      worlds_explored: document.querySelector('[data-user-stat="worlds_explored"]'),
+      sessions_played: document.querySelector('[data-user-stat="sessions_played"]'),
+    };
+    const totalEls = {
+      cells_eaten: document.querySelector('[data-total-stat="cells_eaten"]'),
+      food_eaten: document.querySelector('[data-total-stat="food_eaten"]'),
+      worlds_explored: document.querySelector('[data-total-stat="worlds_explored"]'),
+      sessions_played: document.querySelector('[data-total-stat="sessions_played"]'),
+    };
+
+    const streamUrl = {{ stats_stream_url|tojson }};
+    const source = new EventSource(streamUrl);
+
+    const applyValues = (elements, values = {}) => {
+      Object.entries(elements).forEach(([key, el]) => {
+        if (!el || !(key in values)) {
+          return;
+        }
+        el.textContent = values[key];
+        el.classList.add("has-text-weight-semibold");
+        setTimeout(() => el.classList.remove("has-text-weight-semibold"), 600);
+      });
+    };
+
+    source.addEventListener("stats", (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.totals) {
+          applyValues(totalEls, payload.totals);
+        }
+        if (payload.stats) {
+          applyValues(userStatsEls, payload.stats);
+        }
+      } catch (err) {
+        console.error("Failed to parse stats payload", err);
+      }
+    });
+
+    source.onerror = () => {
+      console.warn("Stats stream disconnected, retrying soon...");
+    };
+
+    window.addEventListener("beforeunload", () => source.close());
+  });
+</script>
 {% endblock %}

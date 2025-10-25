@@ -1,10 +1,13 @@
+import json
+from typing import AsyncIterator, Optional
+
 from fastapi import APIRouter, Depends, Form, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.events import CONFIG_CHANNEL, config_pubsub
+from app.core.events import CONFIG_CHANNEL, STATS_CHANNEL, config_pubsub, stats_pubsub
 from app.core.security import create_access_token
 from app.crud import (
     authenticate_user,
@@ -103,8 +106,70 @@ def dashboard_home(request: Request, user=Depends(get_current_user), db: Session
             "totals": totals,
             "worlds": worlds,
             "config": config,
+            "stats_stream_url": str(request.url_for("stats_stream")),
         },
     )
+
+
+def _serialize_stats(stats: Optional[UserStatsModel]) -> dict:
+    if not stats:
+        return {
+            "cells_eaten": 0,
+            "food_eaten": 0,
+            "worlds_explored": 0,
+            "sessions_played": 0,
+        }
+    return {
+        "cells_eaten": int(stats.cells_eaten or 0),
+        "food_eaten": int(stats.food_eaten or 0),
+        "worlds_explored": int(stats.worlds_explored or 0),
+        "sessions_played": int(stats.sessions_played or 0),
+    }
+
+
+@router.get("/stats/stream", name="stats_stream")
+async def stats_stream(
+    request: Request,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    def load_snapshot() -> dict:
+        db.refresh(user)
+        aggregate = db.query(
+            UserStatsModel.cells_eaten,
+            UserStatsModel.food_eaten,
+            UserStatsModel.worlds_explored,
+            UserStatsModel.sessions_played,
+        ).all()
+        totals = {
+            "cells_eaten": sum((row[0] or 0) for row in aggregate),
+            "food_eaten": sum((row[1] or 0) for row in aggregate),
+            "worlds_explored": sum((row[2] or 0) for row in aggregate),
+            "sessions_played": sum((row[3] or 0) for row in aggregate),
+        }
+        return {
+            "stats": _serialize_stats(user.stats),
+            "totals": totals,
+        }
+
+    async def event_stream() -> AsyncIterator[str]:
+        snapshot = load_snapshot()
+        yield f"event: stats\ndata: {json.dumps(snapshot)}\n\n"
+
+        async with stats_pubsub.subscribe(STATS_CHANNEL) as queue:
+            while True:
+                payload = await queue.get()
+                if await request.is_disconnected():
+                    break
+                if not isinstance(payload, dict):
+                    continue
+                message: dict = {"totals": payload.get("totals", {})}
+                if payload.get("username") == user.username and payload.get("stats"):
+                    message["stats"] = payload["stats"]
+                yield f"event: stats\ndata: {json.dumps(message)}\n\n"
+
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 
 @router.get("/admin")
