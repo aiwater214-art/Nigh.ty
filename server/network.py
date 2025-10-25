@@ -15,9 +15,12 @@ from dotenv import load_dotenv
 from .config import ConfigService, load_config_from_database
 from .player import Player
 from .world import WorldManager, WorldSnapshotRepository
+from sqlalchemy import func
+
 from app.core.database import SessionLocal
 from app.crud import authenticate_user, get_gameplay_config, get_user_by_username
 from app.models import UserStats
+from app.core.events import STATS_CHANNEL, stats_pubsub
 
 
 class Settings(BaseModel):
@@ -89,12 +92,24 @@ class StatsService:
             return
 
         async with self._lock:
-            def worker() -> None:
+            def worker() -> tuple[Optional[UserStats], Optional[dict]]:
                 db = SessionLocal()
                 try:
                     user = get_user_by_username(db, username)
                     if not user or not user.is_active:
-                        return
+                        totals = db.query(
+                            func.sum(UserStats.cells_eaten),
+                            func.sum(UserStats.food_eaten),
+                            func.sum(UserStats.worlds_explored),
+                            func.sum(UserStats.sessions_played),
+                        ).one()
+                        return None, {
+                            "cells_eaten": int(totals[0] or 0),
+                            "food_eaten": int(totals[1] or 0),
+                            "worlds_explored": int(totals[2] or 0),
+                            "sessions_played": int(totals[3] or 0),
+                        }
+
                     stats = user.stats
                     if stats is None:
                         stats = UserStats(user_id=user.id)
@@ -106,10 +121,39 @@ class StatsService:
                     stats.sessions_played += sessions_played
                     db.add(stats)
                     db.commit()
+                    db.refresh(stats)
+
+                    totals = db.query(
+                        func.sum(UserStats.cells_eaten),
+                        func.sum(UserStats.food_eaten),
+                        func.sum(UserStats.worlds_explored),
+                        func.sum(UserStats.sessions_played),
+                    ).one()
+
+                    return stats, {
+                        "cells_eaten": int(totals[0] or 0),
+                        "food_eaten": int(totals[1] or 0),
+                        "worlds_explored": int(totals[2] or 0),
+                        "sessions_played": int(totals[3] or 0),
+                    }
                 finally:
                     db.close()
 
-            await asyncio.to_thread(worker)
+            stats_obj, totals = await asyncio.to_thread(worker)
+
+        if totals is None:
+            return
+
+        payload = {"username": username, "totals": totals}
+        if stats_obj is not None:
+            payload["stats"] = {
+                "cells_eaten": int(stats_obj.cells_eaten),
+                "food_eaten": int(stats_obj.food_eaten),
+                "worlds_explored": int(stats_obj.worlds_explored),
+                "sessions_played": int(stats_obj.sessions_played),
+            }
+
+        stats_pubsub.publish(STATS_CHANNEL, payload)
 
 
 class ConnectionHub:
@@ -360,6 +404,8 @@ def create_app() -> FastAPI:
                                 player.id,
                                 (float(target[0]), float(target[1])),
                             )
+                    elif action == "split":
+                        await world_manager.split_player(world_id, player.id)
 
             reader_task = asyncio.create_task(read_messages())
             async for snapshot in subscription:

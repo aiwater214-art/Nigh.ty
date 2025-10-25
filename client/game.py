@@ -24,6 +24,7 @@ class Entity:
     position: tuple[float, float]
     radius: float
     color: tuple[int, int, int] = (255, 255, 255)
+    owner_id: Optional[str] = None
 
 
 @dataclass
@@ -34,6 +35,8 @@ class WorldView:
     food_count: int = 200
     snapshot_interval: float = 10.0
     players: Dict[str, Entity] = field(default_factory=dict)
+    cells: Dict[str, Entity] = field(default_factory=dict)
+    player_cells: Dict[str, list[str]] = field(default_factory=dict)
     foods: Dict[str, Entity] = field(default_factory=dict)
 
     def apply_config(self, config: dict) -> None:
@@ -49,19 +52,31 @@ class WorldView:
             self.apply_config(config)
 
         self.players.clear()
+        player_map: Dict[str, dict] = {}
         for player in snapshot.get("players", []):
-            cell = next(
-                (c for c in snapshot.get("cells", []) if c.get("player_id") == player["id"]),
-                None,
-            )
-            if not cell:
-                continue
+            player_map[player["id"]] = player
             self.players[player["id"]] = Entity(
                 id=player["id"],
-                position=tuple(cell["position"]),
-                radius=float(cell["radius"]),
+                position=(0.0, 0.0),
+                radius=0.0,
                 color=tuple(player.get("color", (200, 200, 255))),
             )
+
+        self.cells.clear()
+        self.player_cells.clear()
+        for cell in snapshot.get("cells", []):
+            owner_id = cell.get("player_id")
+            player_meta = player_map.get(owner_id, {})
+            entity = Entity(
+                id=cell["id"],
+                position=tuple(cell["position"]),
+                radius=float(cell["radius"]),
+                color=tuple(player_meta.get("color", (200, 200, 255))),
+                owner_id=owner_id,
+            )
+            self.cells[entity.id] = entity
+            if owner_id:
+                self.player_cells.setdefault(owner_id, []).append(entity.id)
 
         self.foods.clear()
         for food in snapshot.get("foods", []):
@@ -142,6 +157,8 @@ class GameClient:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self._running = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and self._player_id:
+                    await websocket.send(json.dumps({"type": "split"}))
 
             screen.fill((15, 15, 26))
             self._draw_world(screen, window_size)
@@ -170,13 +187,13 @@ class GameClient:
                 max(1, int(food.radius)),
             )
 
-        for player in self._world.players.values():
-            pygame.draw.circle(
-                screen,
-                player.color,
-                self._world_to_screen(player.position, window_size),
-                max(5, int(player.radius)),
-            )
+        my_player_id = self._player_id
+        for cell in self._world.cells.values():
+            position = self._world_to_screen(cell.position, window_size)
+            radius = max(5, int(cell.radius))
+            pygame.draw.circle(screen, cell.color, position, radius)
+            if cell.owner_id == my_player_id:
+                pygame.draw.circle(screen, (255, 255, 255), position, radius, 2)
 
     def _world_to_screen(self, position: tuple[float, float], window_size: tuple[int, int]) -> tuple[int, int]:
         scale_x = window_size[0] / self._world.width
