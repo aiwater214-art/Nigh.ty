@@ -16,27 +16,25 @@ from .config import ConfigService, load_config_from_database
 from .player import Player
 from .world import WorldManager, WorldSnapshotRepository
 from app.core.database import SessionLocal
-from app.crud import get_gameplay_config, get_user_by_username
+from app.crud import authenticate_user, get_gameplay_config, get_user_by_username
 from app.models import UserStats
 
 
 class Settings(BaseModel):
-    dashboard_api_key: str
+    dashboard_api_key: Optional[str] = None
     snapshot_dir: str = "data/snapshots"
     tick_rate: float = 30.0
 
     @classmethod
     def load(cls) -> "Settings":
         key = os.getenv("DASHBOARD_API_KEY")
-        if not key:
-            raise RuntimeError("DASHBOARD_API_KEY is required")
         snapshot_dir = os.getenv("SNAPSHOT_DIR", "data/snapshots")
         return cls(dashboard_api_key=key, snapshot_dir=snapshot_dir)
 
 
 class LoginRequest(BaseModel):
     username: str
-    dashboard_token: str
+    password: str
 
 
 class LoginResponse(BaseModel):
@@ -282,22 +280,19 @@ def create_app() -> FastAPI:
         allow_headers=["*"]
     )
 
-    SettingsDep = Annotated[Settings, Depends(get_settings)]
     TokenStoreDep = Annotated[TokenStore, Depends(get_token_store)]
     WorldManagerDep = Annotated[WorldManager, Depends(get_world_manager)]
     ConfigServiceDep = Annotated[ConfigService, Depends(get_config_service)]
 
     @app.post("/login", response_model=LoginResponse)
-    async def login(payload: LoginRequest, settings: SettingsDep, token_store: TokenStoreDep):
-        if payload.dashboard_token != settings.dashboard_api_key:
-            raise HTTPException(status_code=401, detail="Dashboard token invalid")
+    async def login(payload: LoginRequest, token_store: TokenStoreDep):
         db = SessionLocal()
         try:
-            user = get_user_by_username(db, payload.username)
+            user = authenticate_user(db, payload.username, payload.password)
         finally:
             db.close()
-        if not user or not user.is_active:
-            raise HTTPException(status_code=404, detail="User not found")
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
         token = await token_store.issue_token(user.username, user.id)
         return LoginResponse(token=token, username=user.username)
 
