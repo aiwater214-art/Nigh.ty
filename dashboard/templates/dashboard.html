@@ -93,7 +93,7 @@
       sessions_played: document.querySelector('[data-total-stat="sessions_played"]'),
     };
 
-    const streamUrl = {{ url_for('stats_stream')|tojson }};
+    const streamUrl = {{ stats_stream_url|tojson }};
     const source = new EventSource(streamUrl);
 
     const applyValues = (elements, values = {}) => {

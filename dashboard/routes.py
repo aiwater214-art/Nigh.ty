@@ -106,6 +106,7 @@ def dashboard_home(request: Request, user=Depends(get_current_user), db: Session
             "totals": totals,
             "worlds": worlds,
             "config": config,
+            "stats_stream_url": str(request.url_for("stats_stream")),
         },
     )
 
