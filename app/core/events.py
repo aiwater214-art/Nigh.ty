@@ -63,3 +63,7 @@ class LocalPubSub:
 config_pubsub = LocalPubSub()
 CONFIG_CHANNEL = "config:gameplay"
 
+# Dedicated pub/sub instance for statistics updates pushed to the dashboard UI.
+stats_pubsub = LocalPubSub()
+STATS_CHANNEL = "stats:updates"
+
