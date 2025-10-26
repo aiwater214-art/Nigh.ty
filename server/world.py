@@ -98,7 +98,10 @@ class WorldState:
 
     def add_player(self, player: Player) -> Cell:
         spawn_position = self._find_spawn_position()
-        cell = Cell(id=uuid4().hex, player_id=player.id, position=spawn_position, radius=25.0)
+        # Use the player's id for the initial cell id so that a solo cell's
+        # identifier is stable and corresponds to its owner. This simplifies
+        # reasoning about ownership in clients and tests.
+        cell = Cell(id=player.id, player_id=player.id, position=spawn_position, radius=25.0)
         self.players[player.id] = player
         self.cells[cell.id] = cell
         self.player_cells[player.id] = [cell.id]
@@ -201,7 +204,8 @@ class WorldState:
         i = 0
         while i < len(cells):
             cell = cells[i]
-            if cell.player_id not in self.cells:
+            # Skip if this cell was removed during a previous collision resolution.
+            if cell.id not in self.cells:
                 i += 1
                 continue
 
@@ -209,7 +213,8 @@ class WorldState:
             j = i + 1
             while j < len(cells):
                 other = cells[j]
-                if other.player_id not in self.cells:
+                # Skip if the other cell was removed in the interim.
+                if other.id not in self.cells:
                     j += 1
                     continue
                 if cell.player_id == other.player_id:

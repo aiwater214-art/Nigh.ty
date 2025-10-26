@@ -196,11 +196,25 @@ class GameClient:
                 pygame.draw.circle(screen, (255, 255, 255), position, radius, 2)
 
     def _world_to_screen(self, position: tuple[float, float], window_size: tuple[int, int]) -> tuple[int, int]:
-        scale_x = window_size[0] / self._world.width
-        scale_y = window_size[1] / self._world.height
-        return int(position[0] * scale_x), int(position[1] * scale_y)
+        # Convert world coordinates (0..width, 0..height) to screen pixels.
+        width = max(1.0, float(self._world.width))
+        height = max(1.0, float(self._world.height))
+        win_w = max(1, int(window_size[0]))
+        win_h = max(1, int(window_size[1]))
+        scale_x = win_w / width
+        scale_y = win_h / height
+        sx = int(position[0] * scale_x)
+        sy = int(position[1] * scale_y)
+        return (sx, sy)
 
     def _screen_to_world(self, x: int, y: int, window_size: tuple[int, int]) -> tuple[float, float]:
-        scale_x = self._world.width / window_size[0]
-        scale_y = self._world.height / window_size[1]
-        return x * scale_x, y * scale_y
+        # Convert screen pixels to world coordinates, clamped to world bounds.
+        width = max(1.0, float(self._world.width))
+        height = max(1.0, float(self._world.height))
+        win_w = max(1, int(window_size[0]))
+        win_h = max(1, int(window_size[1]))
+        inv_scale_x = width / win_w
+        inv_scale_y = height / win_h
+        wx = max(0.0, min(width, float(x) * inv_scale_x))
+        wy = max(0.0, min(height, float(y) * inv_scale_y))
+        return (wx, wy)
