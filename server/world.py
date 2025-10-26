@@ -20,7 +20,12 @@ SPLIT_MIN_RADIUS = 30.0
 SPLIT_COOLDOWN = 2.0
 MERGE_DELAY = 3.0
 MERGE_DISTANCE_FACTOR = 0.9
-SELF_PULL_STRENGTH = 120.0
+SELF_PULL_STRENGTH = 180.0
+MAX_DELTA_TIME = 1.0 / 20.0  # clamp dt spikes to keep physics stable
+BASE_CELL_SPEED = 260.0
+MIN_CELL_SPEED = 45.0
+MASS_SLOWDOWN = 0.45
+VELOCITY_BLEND = 9.0
 
 
 @dataclass
@@ -164,17 +169,33 @@ class WorldState:
             self.foods[food_id] = Food(id=food_id, position=position, value=5.0)
 
     def tick(self, dt: float) -> None:
+        # Keep the simulation stable even if event loop hiccups for a frame.
+        dt = max(1e-4, min(dt, MAX_DELTA_TIME))
+        blend = min(1.0, dt * VELOCITY_BLEND)
+
         for cell in self.cells.values():
             target = self.targets.get(cell.player_id, cell.position)
             dx = target[0] - cell.position[0]
             dy = target[1] - cell.position[1]
             distance = math.hypot(dx, dy)
+
+            target_speed = BASE_CELL_SPEED - cell.radius * MASS_SLOWDOWN
+            target_speed = max(MIN_CELL_SPEED, min(BASE_CELL_SPEED, target_speed))
+
+            prev_vx, prev_vy = cell.velocity
             if distance > 1e-3:
-                speed = max(20.0, 150.0 - cell.radius)
-                vx = (dx / distance) * speed
-                vy = (dy / distance) * speed
+                desired_vx = (dx / distance) * target_speed
+                desired_vy = (dy / distance) * target_speed
             else:
-                vx = vy = 0.0
+                desired_vx = desired_vy = 0.0
+
+            vx = prev_vx + (desired_vx - prev_vx) * blend
+            vy = prev_vy + (desired_vy - prev_vy) * blend
+
+            if distance < target_speed * dt * 0.6:
+                vx *= 0.7
+                vy *= 0.7
+
             cell.velocity = (vx, vy)
             cell.position = self._clamp_position((cell.position[0] + vx * dt, cell.position[1] + vy * dt))
 
@@ -528,8 +549,9 @@ class WorldManager:
         state = ctx.state
         while True:
             now = time.monotonic()
-            dt = now - state.last_update
+            raw_dt = now - state.last_update
             state.last_update = now
+            dt = min(raw_dt, MAX_DELTA_TIME)
             state.tick(dt)
             events = state.pop_events()
             snapshot = state.snapshot()
