@@ -3,3 +3,7 @@ __pycache__/
 .env
 .venv/
 data/snapshots/*.json
+app.db
+test.db
+data/worlds/
+data/snapshots/

@@ -56,6 +56,25 @@ def test_absorbed_cells_do_not_recollide():
     assert math.isclose(resulting_cell.area(), expected_area, rel_tol=1e-6)
 
 
+def test_overlapping_cells_absorb_with_small_size_advantage():
+    config = WorldConfig(name="duel", width=400.0, height=400.0)
+    world = WorldState(config=config)
+
+    hunter = world.add_player(_make_player("hunter"))
+    prey = world.add_player(_make_player("prey"))
+
+    hunter.radius = 52.0
+    prey.radius = 50.0
+    hunter.position = (200.0, 200.0)
+    prey.position = (200.0, 200.0)
+
+    world._handle_cell_collisions()
+
+    assert prey.id not in world.cells
+    assert hunter.id in world.cells
+    assert world.cells[hunter.id].radius > 52.0
+
+
 def test_update_config_prunes_food(tmp_path):
     async def run_scenario() -> None:
         repo = WorldSnapshotRepository(str(tmp_path))

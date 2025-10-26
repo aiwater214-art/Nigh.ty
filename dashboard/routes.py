@@ -4,7 +4,7 @@ from typing import AsyncIterator, Optional
 from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.events import CONFIG_CHANNEL, STATS_CHANNEL, config_pubsub, stats_pubsub
@@ -133,27 +133,37 @@ async def stats_stream(
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    def load_snapshot() -> dict:
-        db.refresh(user)
+    def aggregate_totals() -> dict:
         aggregate = db.query(
             UserStatsModel.cells_eaten,
             UserStatsModel.food_eaten,
             UserStatsModel.worlds_explored,
             UserStatsModel.sessions_played,
         ).all()
-        totals = {
+        return {
             "cells_eaten": sum((row[0] or 0) for row in aggregate),
             "food_eaten": sum((row[1] or 0) for row in aggregate),
             "worlds_explored": sum((row[2] or 0) for row in aggregate),
             "sessions_played": sum((row[3] or 0) for row in aggregate),
         }
+
+    def load_snapshot() -> dict:
+        fresh_user = (
+            db.query(UserModel)
+            .options(selectinload(UserModel.stats))
+            .filter(UserModel.id == user.id)
+            .one_or_none()
+        )
+        user_stats = _serialize_stats(fresh_user.stats if fresh_user else None)
+        totals = aggregate_totals()
         return {
-            "stats": _serialize_stats(user.stats),
+            "stats": user_stats,
             "totals": totals,
         }
 
     async def event_stream() -> AsyncIterator[str]:
         snapshot = load_snapshot()
+        latest_stats = snapshot["stats"]
         yield f"event: stats\ndata: {json.dumps(snapshot)}\n\n"
 
         async with stats_pubsub.subscribe(STATS_CHANNEL) as queue:
@@ -165,7 +175,10 @@ async def stats_stream(
                     continue
                 message: dict = {"totals": payload.get("totals", {})}
                 if payload.get("username") == user.username and payload.get("stats"):
-                    message["stats"] = payload["stats"]
+                    latest_stats = payload["stats"]
+                    message["stats"] = latest_stats
+                else:
+                    message.setdefault("stats", latest_stats)
                 yield f"event: stats\ndata: {json.dumps(message)}\n\n"
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}

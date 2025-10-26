@@ -21,6 +21,7 @@ SPLIT_COOLDOWN = 2.0
 MERGE_DELAY = 3.0
 MERGE_DISTANCE_FACTOR = 0.9
 SELF_PULL_STRENGTH = 180.0
+ABSORB_RATIO = 1.02
 MAX_DELTA_TIME = 1.0 / 20.0  # clamp dt spikes to keep physics stable
 BASE_CELL_SPEED = 260.0
 MIN_CELL_SPEED = 45.0
@@ -242,9 +243,9 @@ class WorldState:
                     j += 1
                     continue
                 if _collides(cell.position, cell.radius, other.position, other.radius):
-                    if cell.radius > other.radius * 1.1:
+                    if cell.radius >= other.radius * ABSORB_RATIO:
                         self._absorb(cell, other)
-                    elif other.radius > cell.radius * 1.1:
+                    elif other.radius >= cell.radius * ABSORB_RATIO:
                         self._absorb(other, cell)
                     else:
                         j += 1

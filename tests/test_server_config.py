@@ -6,12 +6,23 @@ os.environ.setdefault("FASTAPI_USE_PYDANTIC_V1", "1")
 
 import httpx
 import pytest
+from contextlib import asynccontextmanager
 
 from app.crud import get_gameplay_config, update_gameplay_config
 from client.api import ServerClient
+
+
 from server.network import create_app
 from tests.conftest import TestingSessionLocal
 
+
+
+@asynccontextmanager
+async def lifespan_client(app):
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            yield client
 
 @pytest.mark.asyncio
 async def test_config_endpoint_and_client(monkeypatch, tmp_path):
@@ -34,14 +45,12 @@ async def test_config_endpoint_and_client(monkeypatch, tmp_path):
     finally:
         db.close()
 
-    transport = httpx.ASGITransport(app=app, lifespan="on")
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+    async with lifespan_client(app) as http_client:
         response = await http_client.get("/config")
         assert response.status_code == 200
         assert response.json() == expected
 
-    transport = httpx.ASGITransport(app=app, lifespan="on")
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+    async with lifespan_client(app) as http_client:
         client = ServerClient("http://testserver")
         await client._client.aclose()
         client._client = http_client

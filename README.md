@@ -109,6 +109,15 @@ Useful options:
 The client opens a pygame window, subscribes to WebSocket updates, and sends mouse-based
 movement targets back to the server.
 
+## Utility Scripts
+
+The `scripts/` directory contains small launchers that wrap the common workflows:
+
+- `scripts/manage.sh` / `scripts/manage.bat` prompt you to start the dashboard, the gameplay server, or both at once. Ports can be overridden with `DASHBOARD_PORT` and `GAME_SERVER_PORT` (defaults 8000/8100).
+- `scripts/clean.sh` / `scripts/clean.bat` offer menu options to delete snapshots, reset the `data/worlds` directory, remove SQLite databases (`app.db`, `test.db`), or purge `__pycache__` folders.
+
+These helpers are optional but keep the workflow consistent across shells.
+
 ## Development Notes
 
 - Snapshots are saved in-memory and flushed to disk using background tasks.
