@@ -363,20 +363,34 @@ class WorldState:
             return
 
         angle = (uuid4().int % 360) * math.pi / 180.0
+        direction = (math.cos(angle), math.sin(angle))
         offset_distance = new_radius * 2.5
-        ox = math.cos(angle) * offset_distance
-        oy = math.sin(angle) * offset_distance
+        ox = direction[0] * offset_distance
+        oy = direction[1] * offset_distance
         origin = cell.position
 
         cell.position = self._clamp_position((origin[0] + ox, origin[1] + oy))
         cell.radius = new_radius
         cell.merge_ready_at = now + MERGE_DELAY
 
+        base_speed = BASE_CELL_SPEED - new_radius * MASS_SLOWDOWN
+        base_speed = max(MIN_CELL_SPEED, min(BASE_CELL_SPEED, base_speed))
+        impulse = min(BASE_CELL_SPEED * 1.5, base_speed * 1.25)
+        impulse_vx = direction[0] * impulse
+        impulse_vy = direction[1] * impulse
+        cell.velocity = (cell.velocity[0] + impulse_vx, cell.velocity[1] + impulse_vy)
+
+        new_cell_velocity = (
+            cell.velocity[0] - 2 * impulse_vx,
+            cell.velocity[1] - 2 * impulse_vy,
+        )
+
         new_cell = Cell(
             id=uuid4().hex,
             player_id=player_id,
             position=self._clamp_position((origin[0] - ox, origin[1] - oy)),
             radius=new_radius,
+            velocity=new_cell_velocity,
             merge_ready_at=now + MERGE_DELAY,
         )
         self.cells[new_cell.id] = new_cell
