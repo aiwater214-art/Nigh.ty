@@ -11,10 +11,10 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 from uuid import uuid4
 
 from .physics import (
-    BASE_CELL_SPEED,
-    MASS_SLOWDOWN,
+    MAX_BASE_SPEED,
     MAX_DELTA_TIME,
-    MIN_CELL_SPEED,
+    MIN_BASE_SPEED,
+    RADIUS_SLOW_FACTOR,
     CollisionEvent,
     PhysicsEngine,
     Vector,
@@ -350,17 +350,13 @@ class WorldState:
         self.engine.update_radius(cell.id, new_radius)
         cell.merge_ready_at = now + MERGE_DELAY
 
-        base_speed = BASE_CELL_SPEED - new_radius * MASS_SLOWDOWN
-        base_speed = max(MIN_CELL_SPEED, min(BASE_CELL_SPEED, base_speed))
-        impulse = min(BASE_CELL_SPEED * 1.6, base_speed * 1.5)
+        base_speed = MAX_BASE_SPEED - new_radius * RADIUS_SLOW_FACTOR
+        base_speed = max(MIN_BASE_SPEED, base_speed)
+        impulse = min(MAX_BASE_SPEED * 1.4, base_speed * 1.5)
         impulse_vx = direction[0] * impulse
         impulse_vy = direction[1] * impulse
 
-        prev_vx, prev_vy = cell.velocity
-        cell.velocity = (prev_vx - impulse_vx, prev_vy - impulse_vy)
-        self.engine.set_velocity(cell.id, cell.velocity)
-
-        new_cell_velocity = (prev_vx + impulse_vx, prev_vy + impulse_vy)
+        self.engine.apply_impulse(cell.id, (-impulse_vx, -impulse_vy))
 
         new_cell_position = self._clamp_position(
             (
@@ -374,14 +370,14 @@ class WorldState:
             player_id=player_id,
             position=new_cell_position,
             radius=new_radius,
-            velocity=new_cell_velocity,
+            velocity=(0.0, 0.0),
             merge_ready_at=now + MERGE_DELAY,
         )
         self.cells[new_cell.id] = new_cell
         self.player_cells.setdefault(player_id, []).append(new_cell.id)
         self.engine.add_cell(new_cell, owner_id=player_id)
         self.engine.teleport(new_cell.id, new_cell_position)
-        self.engine.set_velocity(new_cell.id, new_cell_velocity)
+        self.engine.apply_impulse(new_cell.id, (impulse_vx, impulse_vy))
         split_target = self.targets.get(player_id, new_cell_position)
         self.engine.set_cell_target(cell.id, split_target)
         self.engine.set_cell_target(new_cell.id, split_target)
