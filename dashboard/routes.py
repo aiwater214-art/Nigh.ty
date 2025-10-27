@@ -21,6 +21,7 @@ from app.crud import (
 )
 from app.models import User as UserModel, UserStats as UserStatsModel
 from dashboard.deps import get_current_admin_user, get_current_user
+from dashboard.token import get_admin_bootstrap_token, refresh_admin_bootstrap_token
 
 router = APIRouter(prefix="/dashboard")
 templates = Jinja2Templates(directory="dashboard/templates")
@@ -68,15 +69,46 @@ def register_action(
     email: str = Form(...),
     password: str = Form(...),
     full_name: str = Form(""),
+    admin_token: str = Form(""),
     db: Session = Depends(get_db),
 ):
     if get_user_by_username(db, username) or get_user_by_email(db, email):
         return templates.TemplateResponse(
             "register.html",
-            {"request": request, "error": "Username or email already registered"},
+            {
+                "request": request,
+                "error": "Username or email already registered",
+                "prefill": {
+                    "username": username,
+                    "email": email,
+                    "full_name": full_name,
+                },
+            },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
-    create_user(db, username, email, password, full_name or None)
+    is_admin = False
+    supplied_token = admin_token.strip()
+    if supplied_token:
+        expected_token = get_admin_bootstrap_token()
+        if supplied_token != expected_token:
+            return templates.TemplateResponse(
+                "register.html",
+                {
+                    "request": request,
+                    "error": "Invalid admin token",
+                    "prefill": {
+                        "username": username,
+                        "email": email,
+                        "full_name": full_name,
+                    },
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        is_admin = True
+
+    create_user(db, username, email, password, full_name or None, is_admin=is_admin)
+    if is_admin:
+        refresh_admin_bootstrap_token()
     return RedirectResponse(url="/dashboard/login", status_code=status.HTTP_303_SEE_OTHER)
 
 

@@ -11,10 +11,11 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 from uuid import uuid4
 
 from .physics import (
-    MAX_BASE_SPEED,
+    BASE_TARGET_SPEED,
+    BOOST_SPEED_MULTIPLIER,
+    MASS_SPEED_EXPONENT,
     MAX_DELTA_TIME,
-    MIN_BASE_SPEED,
-    RADIUS_SLOW_FACTOR,
+    MIN_TARGET_SPEED,
     CollisionEvent,
     PhysicsEngine,
     Vector,
@@ -350,9 +351,9 @@ class WorldState:
         self.engine.update_radius(cell.id, new_radius)
         cell.merge_ready_at = now + MERGE_DELAY
 
-        base_speed = MAX_BASE_SPEED - new_radius * RADIUS_SLOW_FACTOR
-        base_speed = max(MIN_BASE_SPEED, base_speed)
-        impulse = min(MAX_BASE_SPEED * 1.4, base_speed * 1.5)
+        new_mass = max(new_radius * new_radius, 1.0)
+        base_speed = max(MIN_TARGET_SPEED, BASE_TARGET_SPEED / (new_mass ** MASS_SPEED_EXPONENT))
+        impulse = base_speed * BOOST_SPEED_MULTIPLIER
         impulse_vx = direction[0] * impulse
         impulse_vy = direction[1] * impulse
 

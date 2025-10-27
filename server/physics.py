@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Tuple
 
 
 Vector = Tuple[float, float]
@@ -23,23 +23,20 @@ Vector = Tuple[float, float]
 
 # --- Tunable physics constants ------------------------------------------------
 
-MAX_DELTA_TIME = 1.0 / 24.0
+MAX_DELTA_TIME = 1.0 / 30.0
 
-# Steering and damping tuned to feel close to the reference implementation
-# while still honouring impulses added during splits.
-STEERING_ACCEL = 6.5
-BASE_DAMPING = 1.8
+# Movement tuning – roughly approximates the behaviour in the reference Agar
+# clone while remaining deterministic regardless of the frame-rate.
+BASE_TARGET_SPEED = 520.0
+MIN_TARGET_SPEED = 48.0
+MASS_SPEED_EXPONENT = 0.42
+BOOST_SPEED_MULTIPLIER = 2.3
+IMPULSE_DECAY_RATE = 6.0
 
-# Speed model roughly inspired by the original Agar.io behaviour where the
-# effective speed diminishes with mass.
-MAX_BASE_SPEED = 320.0
-MIN_BASE_SPEED = 60.0
-RADIUS_SLOW_FACTOR = 2.25
-
-# When the same player controls multiple cells we maintain a minimal spacing so
-# they do not constantly overlap.  The factor is slightly below 1.0 so that the
-# visuals match classic Agar behaviour where cells can touch but not clip.
-OWNER_SPACING_FACTOR = 0.94
+# Same-owner spacing keeps cells gently separated while still allowing them to
+# touch visually.  A handful of relaxation passes keeps large stacks stable.
+OWNER_SPACING_FACTOR = 0.95
+RELAXATION_PASSES = 4
 
 
 @dataclass
@@ -64,6 +61,8 @@ class PhysicsBody:
     radius: float = 0.0
     target: Vector = (0.0, 0.0)
     mass: float = field(default=1.0)
+    impulse: Vector = (0.0, 0.0)
+    control_velocity: Vector = (0.0, 0.0)
 
     def sync_from_cell(self) -> None:
         self.position = self.cell.position
@@ -102,6 +101,7 @@ class PhysicsEngine:
         )
         body.mass = max(body.radius * body.radius, 1.0)
         body.velocity = cell.velocity
+        body.impulse = cell.velocity
         self._bodies[cell.id] = body
         body.sync_to_cell()
 
@@ -123,11 +123,16 @@ class PhysicsEngine:
         body = self._bodies.get(cell_id)
         if body:
             body.velocity = velocity
+            body.impulse = velocity
             body.sync_to_cell()
 
     def apply_impulse(self, cell_id: str, impulse: Vector) -> None:
         body = self._bodies.get(cell_id)
         if body:
+            body.impulse = (
+                body.impulse[0] + impulse[0],
+                body.impulse[1] + impulse[1],
+            )
             body.velocity = (
                 body.velocity[0] + impulse[0],
                 body.velocity[1] + impulse[1],
@@ -153,50 +158,63 @@ class PhysicsEngine:
             body.sync_from_cell()
 
         for body in self._bodies.values():
-            self._integrate_velocity(body, dt)
+            body.control_velocity = self._compute_target_velocity(body)
+
+        collisions: Dict[Tuple[str, str], CollisionEvent] = {}
 
         for body in self._bodies.values():
-            body.position = (
-                body.position[0] + body.velocity[0] * dt,
-                body.position[1] + body.velocity[1] * dt,
-            )
-            body.position = self._clamp(body.position)
+            self._integrate_motion(body, dt)
 
-        # Separate same-owner cells gently to keep them from overlapping.
-        self._apply_owner_spacing()
-
-        collisions = self._resolve_overlaps()
+        for _ in range(RELAXATION_PASSES):
+            self._apply_owner_spacing()
+            self._resolve_overlaps(collisions)
+            for body in self._bodies.values():
+                body.position = self._clamp(body.position)
 
         for body in self._bodies.values():
-            body.position = self._clamp(body.position)
             body.sync_to_cell()
 
-        return collisions
+        return list(collisions.values())
 
     # -- Internal helpers ---------------------------------------------------
 
-    def _integrate_velocity(self, body: PhysicsBody, dt: float) -> None:
+    def _compute_target_velocity(self, body: PhysicsBody) -> Vector:
         tx, ty = body.target
         dx = tx - body.position[0]
         dy = ty - body.position[1]
         distance = math.hypot(dx, dy)
-        if distance > 1e-4:
-            direction = (dx / distance, dy / distance)
-        else:
-            direction = (0.0, 0.0)
+        if distance <= 1e-6:
+            return (0.0, 0.0)
 
-        max_speed = MAX_BASE_SPEED - body.radius * RADIUS_SLOW_FACTOR
-        max_speed = max(MIN_BASE_SPEED, max_speed)
+        direction = (dx / distance, dy / distance)
+        target_speed = self._speed_for_mass(body.mass)
+        return (direction[0] * target_speed, direction[1] * target_speed)
 
-        desired_vx = direction[0] * max_speed
-        desired_vy = direction[1] * max_speed
+    def _integrate_motion(self, body: PhysicsBody, dt: float) -> None:
+        vx = body.control_velocity[0] + body.impulse[0]
+        vy = body.control_velocity[1] + body.impulse[1]
 
-        blend = 1.0 - math.exp(-dt * STEERING_ACCEL)
-        vx = body.velocity[0] + (desired_vx - body.velocity[0]) * blend
-        vy = body.velocity[1] + (desired_vy - body.velocity[1]) * blend
+        max_speed = self._speed_for_mass(body.mass) * BOOST_SPEED_MULTIPLIER
+        speed = math.hypot(vx, vy)
+        if speed > max_speed:
+            scale = max_speed / max(speed, 1e-6)
+            vx *= scale
+            vy *= scale
 
-        damping = max(0.0, 1.0 - BASE_DAMPING * dt)
-        body.velocity = (vx * damping, vy * damping)
+        body.velocity = (vx, vy)
+        body.position = (
+            body.position[0] + vx * dt,
+            body.position[1] + vy * dt,
+        )
+        body.position = self._clamp(body.position)
+
+        decay = math.exp(-IMPULSE_DECAY_RATE * dt)
+        body.impulse = (body.impulse[0] * decay, body.impulse[1] * decay)
+
+    def _speed_for_mass(self, mass: float) -> float:
+        adjusted_mass = max(mass, 1.0)
+        speed = BASE_TARGET_SPEED / (adjusted_mass ** MASS_SPEED_EXPONENT)
+        return max(MIN_TARGET_SPEED, speed)
 
     def _apply_owner_spacing(self) -> None:
         owners: Dict[str, List[PhysicsBody]] = {}
@@ -264,8 +282,7 @@ class PhysicsEngine:
                 second.velocity[1] - ny * adjust,
             )
 
-    def _resolve_overlaps(self) -> List[CollisionEvent]:
-        collisions: List[CollisionEvent] = []
+    def _resolve_overlaps(self, collisions: Dict[Tuple[str, str], CollisionEvent]) -> None:
         bodies = list(self._bodies.values())
         for i in range(len(bodies)):
             first = bodies[i]
@@ -303,16 +320,16 @@ class PhysicsEngine:
                     second.position[1] + ny * penetration * share_second,
                 )
 
-                collisions.append(
+                key = (first.id, second.id) if first.id < second.id else (second.id, first.id)
+                collisions.setdefault(
+                    key,
                     CollisionEvent(
                         first_id=first.id,
                         second_id=second.id,
                         penetration=penetration,
                         normal=(nx, ny),
-                    )
+                    ),
                 )
-
-        return collisions
 
     def _clamp(self, position: Vector) -> Vector:
         return (

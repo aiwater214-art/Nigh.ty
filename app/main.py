@@ -8,6 +8,7 @@ from app.api import api_router
 from app.core.config import get_settings
 from app.core.database import Base, engine
 from dashboard.routes import router as dashboard_router
+from dashboard.token import refresh_admin_bootstrap_token
 
 settings = get_settings()
 
@@ -29,6 +30,7 @@ app.include_router(dashboard_router)
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
+    refresh_admin_bootstrap_token()
 
 
 @app.get("/")
