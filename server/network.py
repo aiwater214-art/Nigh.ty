@@ -17,7 +17,9 @@ from .player import Player
 from .world import WorldManager, WorldSnapshotRepository
 from sqlalchemy import func
 
-from app.core.database import SessionLocal
+from sqlalchemy.exc import OperationalError
+
+from app.core.database import Base, SessionLocal, engine
 from app.crud import authenticate_user, get_gameplay_config, get_user_by_username
 from app.models import UserStats
 from app.core.events import STATS_CHANNEL, stats_pubsub
@@ -241,10 +243,17 @@ async def create_dependencies() -> tuple[
     connection_hub = ConnectionHub()
     stats_service = StatsService()
     
+    Base.metadata.create_all(bind=engine)
+
     def fetch_sync() -> dict:
         db = SessionLocal()
         try:
-            config = get_gameplay_config(db)
+            try:
+                config = get_gameplay_config(db)
+            except OperationalError:
+                db.rollback()
+                Base.metadata.create_all(bind=engine)
+                config = get_gameplay_config(db)
             return config.as_dict()
         finally:
             db.close()

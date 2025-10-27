@@ -362,21 +362,51 @@ class WorldState:
         if new_radius < SPLIT_MIN_RADIUS / 2:
             return
 
-        angle = (uuid4().int % 360) * math.pi / 180.0
-        offset_distance = new_radius * 2.5
-        ox = math.cos(angle) * offset_distance
-        oy = math.sin(angle) * offset_distance
         origin = cell.position
+        target = self.targets.get(player_id, origin)
+        dx = target[0] - origin[0]
+        dy = target[1] - origin[1]
+        distance = math.hypot(dx, dy)
+        if distance < 1e-3:
+            angle = (uuid4().int % 360) * math.pi / 180.0
+            direction = (math.cos(angle), math.sin(angle))
+        else:
+            direction = (dx / distance, dy / distance)
 
-        cell.position = self._clamp_position((origin[0] + ox, origin[1] + oy))
+        separation_distance = new_radius * 2.4
+        retreat_distance = new_radius * 0.8
+
+        cell.position = self._clamp_position(
+            (
+                origin[0] - direction[0] * retreat_distance,
+                origin[1] - direction[1] * retreat_distance,
+            )
+        )
         cell.radius = new_radius
         cell.merge_ready_at = now + MERGE_DELAY
+
+        base_speed = BASE_CELL_SPEED - new_radius * MASS_SLOWDOWN
+        base_speed = max(MIN_CELL_SPEED, min(BASE_CELL_SPEED, base_speed))
+        impulse = min(BASE_CELL_SPEED * 1.6, base_speed * 1.5)
+        impulse_vx = direction[0] * impulse
+        impulse_vy = direction[1] * impulse
+
+        prev_vx, prev_vy = cell.velocity
+        cell.velocity = (prev_vx - impulse_vx, prev_vy - impulse_vy)
+
+        new_cell_velocity = (prev_vx + impulse_vx, prev_vy + impulse_vy)
 
         new_cell = Cell(
             id=uuid4().hex,
             player_id=player_id,
-            position=self._clamp_position((origin[0] - ox, origin[1] - oy)),
+            position=self._clamp_position(
+                (
+                    origin[0] + direction[0] * separation_distance,
+                    origin[1] + direction[1] * separation_distance,
+                )
+            ),
             radius=new_radius,
+            velocity=new_cell_velocity,
             merge_ready_at=now + MERGE_DELAY,
         )
         self.cells[new_cell.id] = new_cell
