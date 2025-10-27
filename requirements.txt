@@ -5,6 +5,8 @@ alembic
 python-multipart
 python-jose[cryptography]
 passlib[bcrypt]
+itsdangerous>=2.1
+bcrypt<5.0
 pydantic[email]
 pydantic-settings
 jinja2
