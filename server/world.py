@@ -7,26 +7,27 @@ import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 from uuid import uuid4
 
+from .physics import (
+    BASE_TARGET_SPEED,
+    BOOST_SPEED_MULTIPLIER,
+    MASS_SPEED_EXPONENT,
+    MAX_DELTA_TIME,
+    MIN_TARGET_SPEED,
+    CollisionEvent,
+    PhysicsEngine,
+    Vector,
+)
 from .player import Player
-
-
-Vector = Tuple[float, float]
 
 
 SPLIT_MIN_RADIUS = 30.0
 SPLIT_COOLDOWN = 2.0
 MERGE_DELAY = 3.0
 MERGE_DISTANCE_FACTOR = 0.9
-SELF_PULL_STRENGTH = 180.0
 ABSORB_RATIO = 1.02
-MAX_DELTA_TIME = 1.0 / 20.0  # clamp dt spikes to keep physics stable
-BASE_CELL_SPEED = 260.0
-MIN_CELL_SPEED = 45.0
-MASS_SLOWDOWN = 0.45
-VELOCITY_BLEND = 9.0
 
 
 @dataclass
@@ -101,6 +102,10 @@ class WorldState:
     targets: Dict[str, Vector] = field(default_factory=dict)
     events: List[dict] = field(default_factory=list)
     split_cooldowns: Dict[str, float] = field(default_factory=dict)
+    engine: PhysicsEngine = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.engine = PhysicsEngine(self.config.width, self.config.height)
 
     def add_player(self, player: Player) -> Cell:
         spawn_position = self._find_spawn_position()
@@ -113,6 +118,7 @@ class WorldState:
         self.player_cells[player.id] = [cell.id]
         self.targets[player.id] = spawn_position
         self.split_cooldowns[player.id] = 0.0
+        self.engine.add_cell(cell, owner_id=player.id)
         return cell
 
     def remove_player(self, player_id: str) -> None:
@@ -127,7 +133,11 @@ class WorldState:
         if player_id in self.targets:
             tx = max(0.0, min(self.config.width, target[0]))
             ty = max(0.0, min(self.config.height, target[1]))
-            self.targets[player_id] = (tx, ty)
+            clamped = (tx, ty)
+            self.targets[player_id] = clamped
+            for cell_id in self.player_cells.get(player_id, []):
+                if cell_id in self.cells:
+                    self.engine.set_cell_target(cell_id, clamped)
 
     def _remove_cell(self, cell_id: str) -> None:
         cell = self.cells.pop(cell_id, None)
@@ -138,6 +148,7 @@ class WorldState:
             cells.remove(cell_id)
             if not cells:
                 self.player_cells.pop(cell.player_id, None)
+        self.engine.remove_cell(cell_id)
 
     def _clamp_position(self, position: Vector) -> Vector:
         return (
@@ -172,37 +183,15 @@ class WorldState:
     def tick(self, dt: float) -> None:
         # Keep the simulation stable even if event loop hiccups for a frame.
         dt = max(1e-4, min(dt, MAX_DELTA_TIME))
-        blend = min(1.0, dt * VELOCITY_BLEND)
 
         for cell in self.cells.values():
             target = self.targets.get(cell.player_id, cell.position)
-            dx = target[0] - cell.position[0]
-            dy = target[1] - cell.position[1]
-            distance = math.hypot(dx, dy)
+            self.engine.set_cell_target(cell.id, target)
 
-            target_speed = BASE_CELL_SPEED - cell.radius * MASS_SLOWDOWN
-            target_speed = max(MIN_CELL_SPEED, min(BASE_CELL_SPEED, target_speed))
+        collisions = self.engine.step(dt)
 
-            prev_vx, prev_vy = cell.velocity
-            if distance > 1e-3:
-                desired_vx = (dx / distance) * target_speed
-                desired_vy = (dy / distance) * target_speed
-            else:
-                desired_vx = desired_vy = 0.0
-
-            vx = prev_vx + (desired_vx - prev_vx) * blend
-            vy = prev_vy + (desired_vy - prev_vy) * blend
-
-            if distance < target_speed * dt * 0.6:
-                vx *= 0.7
-                vy *= 0.7
-
-            cell.velocity = (vx, vy)
-            cell.position = self._clamp_position((cell.position[0] + vx * dt, cell.position[1] + vy * dt))
-
-        self._apply_self_gravity(dt)
         self._handle_food_collisions()
-        self._handle_cell_collisions()
+        self._handle_cell_collisions(collisions)
         self._handle_self_merges()
 
     def _handle_food_collisions(self) -> None:
@@ -212,6 +201,7 @@ class WorldState:
                 if _collides(cell.position, cell.radius, food.position, 3.0):
                     consumed.append(food.id)
                     cell.radius += food.value * 0.1
+                    self.engine.update_radius(cell.id, cell.radius)
                     player = self.players.get(cell.player_id)
                     if player:
                         player.score += food.value
@@ -221,71 +211,42 @@ class WorldState:
             self.foods.pop(food_id, None)
         self.populate_food()
 
-    def _handle_cell_collisions(self) -> None:
-        cells = list(self.cells.values())
-        i = 0
-        while i < len(cells):
-            cell = cells[i]
-            # Skip if this cell was removed during a previous collision resolution.
-            if cell.id not in self.cells:
-                i += 1
+    def _handle_cell_collisions(self, collisions: Iterable[CollisionEvent] | None = None) -> None:
+        processed: set[tuple[str, str]] = set()
+        collision_iterable = collisions or ()
+        for event in collision_iterable:
+            key = (event.first_id, event.second_id)
+            if key in processed:
                 continue
+            processed.add(key)
+            cell = self.cells.get(event.first_id)
+            other = self.cells.get(event.second_id)
+            if not cell or not other:
+                continue
+            if cell.player_id == other.player_id:
+                continue
+            if cell.radius >= other.radius * ABSORB_RATIO:
+                self._absorb(cell, other)
+            elif other.radius >= cell.radius * ABSORB_RATIO:
+                self._absorb(other, cell)
 
-            restart = False
-            j = i + 1
-            while j < len(cells):
+        # Fallback sweep to catch slow overlaps the impulse solver handled
+        # without reporting a collision (e.g. extremely gentle contacts).
+        cells = list(self.cells.values())
+        for i, cell in enumerate(cells):
+            if cell.id not in self.cells:
+                continue
+            for j in range(i + 1, len(cells)):
                 other = cells[j]
-                # Skip if the other cell was removed in the interim.
                 if other.id not in self.cells:
-                    j += 1
                     continue
                 if cell.player_id == other.player_id:
-                    j += 1
                     continue
                 if _collides(cell.position, cell.radius, other.position, other.radius):
                     if cell.radius >= other.radius * ABSORB_RATIO:
                         self._absorb(cell, other)
                     elif other.radius >= cell.radius * ABSORB_RATIO:
                         self._absorb(other, cell)
-                    else:
-                        j += 1
-                        continue
-
-                    cells = list(self.cells.values())
-                    restart = True
-                    break
-                j += 1
-
-            if restart:
-                i = 0
-                continue
-
-            i += 1
-
-    def _apply_self_gravity(self, dt: float) -> None:
-        now = time.monotonic()
-        for cell_ids in self.player_cells.values():
-            cells = [self.cells[cid] for cid in cell_ids if cid in self.cells]
-            if len(cells) < 2:
-                continue
-            for idx in range(len(cells)):
-                primary = cells[idx]
-                for jdx in range(idx + 1, len(cells)):
-                    secondary = cells[jdx]
-                    if now < primary.merge_ready_at or now < secondary.merge_ready_at:
-                        continue
-                    dx = secondary.position[0] - primary.position[0]
-                    dy = secondary.position[1] - primary.position[1]
-                    distance = math.hypot(dx, dy)
-                    if distance <= 1e-3:
-                        continue
-                    pull = min((primary.radius + secondary.radius) * 0.5, SELF_PULL_STRENGTH * dt)
-                    if pull <= 0:
-                        continue
-                    move_x = (dx / distance) * pull
-                    move_y = (dy / distance) * pull
-                    primary.position = self._clamp_position((primary.position[0] + move_x, primary.position[1] + move_y))
-                    secondary.position = self._clamp_position((secondary.position[0] - move_x, secondary.position[1] - move_y))
 
     def _handle_self_merges(self) -> None:
         now = time.monotonic()
@@ -337,6 +298,8 @@ class WorldState:
             )
         primary.radius = math.sqrt(total_area / math.pi)
         primary.merge_ready_at = time.monotonic() + MERGE_DELAY
+        self.engine.teleport(primary.id, primary.position)
+        self.engine.update_radius(primary.id, primary.radius)
         self._remove_cell(secondary.id)
 
     def split_player(self, player_id: str) -> None:
@@ -362,25 +325,63 @@ class WorldState:
         if new_radius < SPLIT_MIN_RADIUS / 2:
             return
 
-        angle = (uuid4().int % 360) * math.pi / 180.0
-        offset_distance = new_radius * 2.5
-        ox = math.cos(angle) * offset_distance
-        oy = math.sin(angle) * offset_distance
         origin = cell.position
+        target = self.targets.get(player_id, origin)
+        dx = target[0] - origin[0]
+        dy = target[1] - origin[1]
+        distance = math.hypot(dx, dy)
+        if distance < 1e-3:
+            angle = (uuid4().int % 360) * math.pi / 180.0
+            direction = (math.cos(angle), math.sin(angle))
+        else:
+            direction = (dx / distance, dy / distance)
 
-        cell.position = self._clamp_position((origin[0] + ox, origin[1] + oy))
+        separation_distance = new_radius * 2.4
+        retreat_distance = new_radius * 0.8
+
+        new_position = self._clamp_position(
+            (
+                origin[0] - direction[0] * retreat_distance,
+                origin[1] - direction[1] * retreat_distance,
+            )
+        )
+        cell.position = new_position
         cell.radius = new_radius
+        self.engine.teleport(cell.id, new_position)
+        self.engine.update_radius(cell.id, new_radius)
         cell.merge_ready_at = now + MERGE_DELAY
+
+        new_mass = max(new_radius * new_radius, 1.0)
+        base_speed = max(MIN_TARGET_SPEED, BASE_TARGET_SPEED / (new_mass ** MASS_SPEED_EXPONENT))
+        impulse = base_speed * BOOST_SPEED_MULTIPLIER
+        impulse_vx = direction[0] * impulse
+        impulse_vy = direction[1] * impulse
+
+        self.engine.apply_impulse(cell.id, (-impulse_vx, -impulse_vy))
+
+        new_cell_position = self._clamp_position(
+            (
+                origin[0] + direction[0] * separation_distance,
+                origin[1] + direction[1] * separation_distance,
+            )
+        )
 
         new_cell = Cell(
             id=uuid4().hex,
             player_id=player_id,
-            position=self._clamp_position((origin[0] - ox, origin[1] - oy)),
+            position=new_cell_position,
             radius=new_radius,
+            velocity=(0.0, 0.0),
             merge_ready_at=now + MERGE_DELAY,
         )
         self.cells[new_cell.id] = new_cell
         self.player_cells.setdefault(player_id, []).append(new_cell.id)
+        self.engine.add_cell(new_cell, owner_id=player_id)
+        self.engine.teleport(new_cell.id, new_cell_position)
+        self.engine.apply_impulse(new_cell.id, (impulse_vx, impulse_vy))
+        split_target = self.targets.get(player_id, new_cell_position)
+        self.engine.set_cell_target(cell.id, split_target)
+        self.engine.set_cell_target(new_cell.id, split_target)
         self.split_cooldowns[player_id] = now + SPLIT_COOLDOWN
 
     def _absorb(self, winner: Cell, loser: Cell) -> None:
@@ -398,6 +399,8 @@ class WorldState:
             )
         winner.radius = math.sqrt(total_area / math.pi)
         winner.merge_ready_at = time.monotonic() + MERGE_DELAY
+        self.engine.teleport(winner.id, winner.position)
+        self.engine.update_radius(winner.id, winner.radius)
         winner_player = self.players.get(winner.player_id)
         loser_player = self.players.get(loser.player_id)
         if winner_player:
@@ -586,6 +589,7 @@ class WorldManager:
                 state.config.tick_rate = float(self._config_defaults["tick_rate"])
                 state.config.snapshot_interval = float(self._config_defaults["snapshot_interval"])
                 state.config.food_count = int(self._config_defaults["food_count"])
+                state.engine.resize_world(state.config.width, state.config.height)
                 state.populate_food()
 
 

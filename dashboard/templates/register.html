@@ -8,19 +8,19 @@
   <div class="field">
     <label class="label">Username</label>
     <div class="control">
-      <input class="input" type="text" name="username" required />
+      <input class="input" type="text" name="username" value="{{ prefill.username if prefill else '' }}" required />
     </div>
   </div>
   <div class="field">
     <label class="label">Email</label>
     <div class="control">
-      <input class="input" type="email" name="email" required />
+      <input class="input" type="email" name="email" value="{{ prefill.email if prefill else '' }}" required />
     </div>
   </div>
   <div class="field">
     <label class="label">Full name</label>
     <div class="control">
-      <input class="input" type="text" name="full_name" />
+      <input class="input" type="text" name="full_name" value="{{ prefill.full_name if prefill else '' }}" />
     </div>
   </div>
   <div class="field">
@@ -28,6 +28,13 @@
     <div class="control">
       <input class="input" type="password" name="password" required />
     </div>
+  </div>
+  <div class="field">
+    <label class="label">Admin token</label>
+    <div class="control">
+      <input class="input" type="text" name="admin_token" placeholder="Optional bootstrap token" />
+    </div>
+    <p class="help">Provide the console token to create an admin account.</p>
   </div>
   <div class="field is-grouped">
     <div class="control">
